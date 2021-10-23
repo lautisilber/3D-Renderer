@@ -16,7 +16,9 @@ class Mesh:
 
         self.scale_m = np.identity(4, dtype=float)
         self.translation = np.identity(4, dtype=float)
-        self.rotation = np.identity(4, dtype=float)
+        self.rotation_x = np.identity(4, dtype=float)
+        self.rotation_y = np.identity(4, dtype=float)
+        self.rotation_z = np.identity(4, dtype=float)
 
     def set_verts_tris(self, vertices: arraylike, triangles: arraylike) -> None:
         self.vertices = vertices
@@ -50,6 +52,30 @@ class Mesh:
         self.scale_m[1, 1] = y
         self.scale_m[2, 2] = z
 
+    def rotate_x(self, theta):
+        self.rotation_x = np.array([
+            [1, 0, 0, 0],
+            [0, np.cos(theta), -np.sin(theta), 0],
+            [0, np.sin(theta), np.cos(theta), 0],
+            [0, 0, 0, 1]
+        ])
+
+    def rotate_y(self, theta):
+        self.rotation_x = np.array([
+            [np.cos(theta), 0, np.sin(theta), 0],
+            [0, 1, 0, 0],
+            [-np.sin(theta), 0, np.cos(theta), 0],
+            [0, 0, 0, 1]
+        ])
+
+    def rotate_z(self, theta):
+        self.rotation_x = np.array([
+            [np.cos(theta), -np.sin(theta), 0, 0],
+            [np.sin(theta), np.cos(theta), 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+
 
 class Cube(Mesh):
     def __init__ (self, color: arraylike=(255, 255, 255),  scale: int=1) -> None:
@@ -66,8 +92,20 @@ class Cube(Mesh):
             0, 5, 4, 0, 1, 5,
             2, 6, 7, 2, 7, 3
         ])
-        self.color = np.array(color)
+        self.color = tuple(color)
         self.recalc_normals()
+
+
+class Triangle(Mesh):
+    def __init__(self) -> None:
+        super().__init__()
+        self.vertices = np.array([
+            [-.5, -.5, 0, 1], [.5, -.5, 0, 1], [0, 2**(1/2)-1, 0, 1]
+        ])
+        self.triangles = np.array([0, 1, 2])
+        self.color = (255, 0, 255)
+        self.recalc_normals()
+
 
 
 class OrthograficProjection:
@@ -78,19 +116,22 @@ class OrthograficProjection:
         self.translation = np.identity(4, dtype=float)
         self.rotation = np.identity(4, dtype=float)
 
-        left, right = 0, width
-        up, bottom = 0, height
-        far, near = -10, 100
-        scale_x = 2.0 / (right - left)
-        scale_y = 2.0 / (up - bottom)
-        scale_z = 2.0 / (far - near)
-        mid_x = (left + right) / 2.0
-        mid_y = (bottom + up) / 2.0
-        mid_z = (-near + -far) / 2.0
+        self.light_direction = np.array([1, 1, -1], dtype=float)
+
+        left, right = -1, 1#width
+        up, bottom = -1, 1#height
+        far, near = 10, -10
         self.projection = np.array([
-            [scale_x, 0, 0, -mid_x],
-            [0, scale_y, 0, -mid_y],
-            [0, 0, scale_z, -mid_z],
+            [2/(right-left), 0, 0, 2/2],
+            [0, 2/(up-bottom), 0, 2/2],
+            [0, 0, -2/(far-near), 0],
+            [-(right + left)/(right-left), -(up+bottom)/(up-bottom), -(far+near)/(far-near), 1]
+        ])
+
+        self.projection = np.array([
+            [width, 0, 0, width/2],
+            [0, -height, 0, height/2],
+            [0, 0, 1, 0],
             [0, 0, 0, 1]
         ])
 
@@ -107,6 +148,9 @@ class OrthograficProjection:
 
     def add_mesh(self, mesh: Mesh) -> None:
         self.meshes.append(mesh)
+
+    def set_light_direction(self, x: float, y: float, z: float) -> None:
+        self.light_direction = np.array([x, y, z], dtype=float)
 
     def render(self) -> np.ndarray:
         img = Image.new(mode='RGB', size=self.size, color='black')
@@ -130,15 +174,34 @@ class OrthograficProjection:
                 b = np.dot(mesh.scale_m, b)
                 c = np.dot(mesh.scale_m, c)
 
+                '''# local rotation x
+                a = np.dot(mesh.rotation_x, a)
+                b = np.dot(mesh.rotation_x, b)
+                c = np.dot(mesh.rotation_x, c)
+
+                # local rotation y
+                a = np.dot(mesh.rotation_y, a)
+                b = np.dot(mesh.rotation_y, b)
+                c = np.dot(mesh.rotation_y, c)
+
+                # local rotation z
+                a = np.dot(mesh.rotation_z, a)
+                b = np.dot(mesh.rotation_z, b)
+                c = np.dot(mesh.rotation_z, c)'''
+
                 # local rotation
-                a = np.dot(mesh.rotation, a)
-                b = np.dot(mesh.rotation, b)
-                c = np.dot(mesh.rotation, c)
+                a = np.dot(np.dot(mesh.rotation_z, np.dot(mesh.rotation_y, mesh.rotation_x)), a)
+                b = np.dot(np.dot(mesh.rotation_z, np.dot(mesh.rotation_y, mesh.rotation_x)), b)
+                c = np.dot(np.dot(mesh.rotation_z, np.dot(mesh.rotation_y, mesh.rotation_x)), c)
 
                 # local translation
                 a = np.dot(mesh.translation, a)
                 b = np.dot(mesh.translation, b)
                 c = np.dot(mesh.translation, c)
+
+                # lighting
+                intensity = np.dot(np.cross(b[:3]-a[:3], c[:3]-a[:3]), self.light_direction)
+                intensity = int(intensity*255)
 
                 # global translation
                 a = np.dot(self.translation, a)
@@ -150,6 +213,8 @@ class OrthograficProjection:
                 b = np.dot(self.rotation, b)
                 c = np.dot(self.rotation, c)
 
+                print(self.projection, a, b, c)
+
                 # global projection
                 a = np.dot(self.projection, a)
                 b = np.dot(self.projection, b)
@@ -159,13 +224,17 @@ class OrthograficProjection:
                 b = b[:2]
                 c = c[:2]
 
-                draw.polygon([*a, *b, *c], fill='green')
+                print(a, b, c)
+
+                draw.polygon([*a, *b, *c], fill=(intensity, intensity, intensity))
         img.show()
 
 
 cube = Cube()
-cube.translate(5, 0, -1)
-cube.scale(100, 100, 100)
+cube.scale(.25, .25, .25)
+cube.rotate_y(np.pi/6)
+cube.rotate_x(np.pi/8)
+
 
 op = OrthograficProjection(400, 400)
 op.add_mesh(cube)
